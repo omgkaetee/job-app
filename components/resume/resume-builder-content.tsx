@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useUser } from "@clerk/nextjs"
 import {
   Upload,
   FileText,
@@ -12,11 +13,11 @@ import {
   Code,
   Briefcase,
   GraduationCap,
-  Award,
   Wand2,
   Target,
   FileCheck,
   Settings2,
+  Loader2,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -33,10 +34,107 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { useResumes, useSaveResume, useAnalyzeResume } from "@/hooks/useResume"
+import { useGenerateUploadUrl } from "@/hooks/useResume"
 
 export function ResumeBuilderContent() {
+  const { user, isLoaded } = useUser()
   const [isDragging, setIsDragging] = React.useState(false)
-  const [hasResume, setHasResume] = React.useState(true)
+  const [isUploading, setIsUploading] = React.useState(false)
+  const [isAnalyzing, setIsAnalyzing] = React.useState(false)
+  const [selectedResume, setSelectedResume] = React.useState<any>(null)
+  const [targetRole, setTargetRole] = React.useState("software-engineer")
+  const [file, setFile] = React.useState<File | null>(null)
+
+  const generateUploadUrl = useGenerateUploadUrl()
+  const saveResume = useSaveResume()
+  const analyzeResume = useAnalyzeResume()
+
+  const resumes = useResumes(user?.id || "")
+  
+  const currentResume = selectedResume || resumes[0]
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0])
+    }
+  }
+
+  const handleUpload = async () => {
+    if (!file || !user) return
+
+    setIsUploading(true)
+    try {
+      const uploadUrl = await generateUploadUrl()
+
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      })
+
+      if (!response.ok) {
+        throw new Error("Upload failed")
+      }
+
+      const { storageId } = await response.json()
+
+      await saveResume({
+        userId: user.id,
+        storageId,
+        fileName: file.name,
+        fileType: file.type,
+        parsedText: "",
+        targetRole,
+      })
+
+      setFile(null)
+    } catch (error) {
+      console.error("Upload error:", error)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const handleAnalyze = async () => {
+    if (!currentResume) return
+    
+    setIsAnalyzing(true)
+    try {
+      await analyzeResume({
+        resumeId: currentResume._id,
+        targetRole,
+      })
+    } catch (error) {
+      console.error("Analysis error:", error)
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  if (!isLoaded) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-[400px]">
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (!user) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-[400px]">
+        <Card className="max-w-md">
+          <CardContent className="pt-6 text-center">
+            <FileText className="size-12 mx-auto mb-4 text-muted-foreground" />
+            <h3 className="text-lg font-semibold mb-2">Sign in Required</h3>
+            <p className="text-muted-foreground">Please sign in to upload and analyze your resume.</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  const analysis = currentResume?.analysis as any
 
   return (
     <div className="p-6 space-y-6">
@@ -63,229 +161,55 @@ export function ResumeBuilderContent() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {!hasResume ? (
+              <div className="space-y-4">
                 <div
                   className={cn(
-                    "relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 transition-colors",
-                    isDragging
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
+                    "relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors cursor-pointer",
+                    isDragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
                   )}
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    setIsDragging(true)
-                  }}
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={(e) => {
                     e.preventDefault()
                     setIsDragging(false)
-                    setHasResume(true)
+                    if (e.dataTransfer.files[0]) {
+                      setFile(e.dataTransfer.files[0])
+                    }
                   }}
                 >
+                  <input
+                    type="file"
+                    accept=".pdf,.docx,.doc"
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    onChange={handleFileChange}
+                  />
                   <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 mb-4">
                     <Upload className="size-6 text-primary" />
                   </div>
-                  <p className="text-sm font-medium text-foreground mb-1">
-                    Drop your resume here
-                  </p>
-                  <p className="text-xs text-muted-foreground mb-4">
-                    Supports PDF, DOCX, TXT (Max 5MB)
-                  </p>
-                  <Button variant="outline" size="sm">
-                    Browse Files
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-secondary/30 border border-border">
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-                        <FileText className="size-5 text-primary" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">resume_john_doe_2024.pdf</p>
-                        <p className="text-xs text-muted-foreground">245 KB • Uploaded 2 days ago</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="sm">Replace</Button>
-                      <Button variant="ghost" size="icon" className="size-8">
-                        <Download className="size-4" />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1">
-                      <div className="flex justify-between text-sm mb-2">
-                        <span>AI Analysis Score</span>
-                        <span className="font-medium text-primary">78/100</span>
-                      </div>
-                      <Progress value={78} className="h-2" />
-                    </div>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      <RefreshCcw className="size-4" />
-                      Re-analyze
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* AI Extracted Information */}
-          {hasResume && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="size-5 text-primary" />
-                  AI-Extracted Information
-                </CardTitle>
-                <CardDescription>
-                  Key information extracted from your resume
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Tabs defaultValue="skills" className="w-full">
-                  <TabsList className="grid w-full grid-cols-4">
-                    <TabsTrigger value="skills" className="gap-2">
-                      <Code className="size-4" />
-                      <span className="hidden sm:inline">Skills</span>
-                    </TabsTrigger>
-                    <TabsTrigger value="experience" className="gap-2">
-                      <Briefcase className="size-4" />
-                      <span className="hidden sm:inline">Experience</span>
-                    </TabsTrigger>
-                    <TabsTrigger value="education" className="gap-2">
-                      <GraduationCap className="size-4" />
-                      <span className="hidden sm:inline">Education</span>
-                    </TabsTrigger>
-                    <TabsTrigger value="gaps" className="gap-2">
-                      <AlertTriangle className="size-4" />
-                      <span className="hidden sm:inline">Gaps</span>
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="skills" className="mt-4">
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-sm font-medium text-foreground mb-3">Technical Skills</p>
-                        <div className="flex flex-wrap gap-2">
-                          {["JavaScript", "TypeScript", "React", "Node.js", "Python", "PostgreSQL", "AWS", "Docker", "Git", "REST APIs"].map((skill) => (
-                            <Badge key={skill} variant="secondary" className="gap-1">
-                              <Check className="size-3 text-success" />
-                              {skill}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-foreground mb-3">Soft Skills</p>
-                        <div className="flex flex-wrap gap-2">
-                          {["Leadership", "Communication", "Problem Solving", "Team Collaboration"].map((skill) => (
-                            <Badge key={skill} variant="outline">
-                              {skill}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="experience" className="mt-4">
-                    <div className="space-y-4">
-                      <ExperienceItem
-                        title="Senior Software Engineer"
-                        company="TechCorp Inc."
-                        duration="2022 - Present"
-                        highlights={["Led team of 5 engineers", "Improved performance by 40%", "Architected microservices"]}
-                      />
-                      <ExperienceItem
-                        title="Software Engineer"
-                        company="StartupXYZ"
-                        duration="2019 - 2022"
-                        highlights={["Full-stack development", "Built core features", "Mentored junior developers"]}
-                      />
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="education" className="mt-4">
-                    <div className="space-y-4">
-                      <div className="p-4 rounded-lg bg-secondary/30 border border-border">
-                        <div className="flex items-start gap-3">
-                          <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 shrink-0">
-                            <GraduationCap className="size-5 text-primary" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-foreground">Bachelor of Science in Computer Science</p>
-                            <p className="text-sm text-muted-foreground">Stanford University • 2015 - 2019</p>
-                            <p className="text-sm text-muted-foreground mt-1">GPA: 3.8/4.0</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="gaps" className="mt-4">
-                    <div className="space-y-3">
-                      <GapItem
-                        type="missing"
-                        title="Missing Industry Keywords"
-                        description="Consider adding: CI/CD, Agile, Scrum, Kubernetes, GraphQL"
-                      />
-                      <GapItem
-                        type="improvement"
-                        title="Quantifiable Achievements"
-                        description="Add specific metrics to 2 of your bullet points"
-                      />
-                      <GapItem
-                        type="suggestion"
-                        title="Professional Summary"
-                        description="Your summary could be more targeted to specific roles"
-                      />
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* AI Refinement Section */}
-          {hasResume && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Wand2 className="size-5 text-primary" />
-                  AI Resume Refinement
-                </CardTitle>
-                <CardDescription>
-                  Let AI help you improve your resume sections
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <RefinementOption
-                    icon={FileCheck}
-                    title="Bullet-Point Rewriting"
-                    description="Transform weak bullet points into impactful achievements"
-                  />
-                  <RefinementOption
-                    icon={Target}
-                    title="ATS Keyword Optimization"
-                    description="Add keywords that help your resume pass ATS filters"
-                  />
-                  <RefinementOption
-                    icon={Settings2}
-                    title="Tone & Style Adjustments"
-                    description="Professional, concise, and impact-focused language"
-                  />
-                  <RefinementOption
-                    icon={Briefcase}
-                    title="Role-Specific Tailoring"
-                    description="Customize for software engineer, designer, PM, etc."
-                  />
+                  {file ? (
+                    <>
+                      <p className="text-sm font-medium text-foreground">{file.name}</p>
+                      <p className="text-xs text-muted-foreground mb-4">
+                        {(file.size / 1024).toFixed(1)} KB
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-foreground mb-1">
+                        Drop your resume here
+                      </p>
+                      <p className="text-xs text-muted-foreground mb-4">
+                        Supports PDF, DOCX (Max 5MB)
+                      </p>
+                    </>
+                  )}
                 </div>
 
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-foreground">Target Role</label>
-                    <Select defaultValue="software-engineer">
-                      <SelectTrigger className="w-[200px]">
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <label className="text-sm font-medium text-foreground mb-2 block">Target Role</label>
+                    <Select value={targetRole} onValueChange={setTargetRole}>
+                      <SelectTrigger>
                         <SelectValue placeholder="Select role" />
                       </SelectTrigger>
                       <SelectContent>
@@ -298,182 +222,242 @@ export function ResumeBuilderContent() {
                       </SelectContent>
                     </Select>
                   </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-foreground">Additional Instructions (Optional)</label>
-                    <Textarea
-                      placeholder="E.g., Focus on leadership experience, emphasize cloud technologies..."
-                      className="min-h-[80px]"
-                    />
-                  </div>
-
-                  <Button className="w-full gap-2">
-                    <Sparkles className="size-4" />
-                    Generate Improved Resume Sections
+                  <Button 
+                    className="mt-6 gap-2" 
+                    onClick={handleUpload}
+                    disabled={!file || isUploading}
+                  >
+                    {isUploading ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Upload className="size-4" />
+                    )}
+                    Upload & Analyze
                   </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Saved Resumes */}
+          {resumes.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="size-5 text-primary" />
+                  Your Resumes
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {resumes.map((resume: any) => (
+                    <div
+                      key={resume._id}
+                      className={cn(
+                        "flex items-center justify-between p-3 rounded-lg border cursor-pointer",
+                        currentResume?._id === resume._id ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                      )}
+                      onClick={() => setSelectedResume(resume)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <FileText className="size-5 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">{resume.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {resume.score ? `Score: ${resume.score}/100` : "Not analyzed"}
+                          </p>
+                        </div>
+                      </div>
+                      {resume.isDefault && <Badge variant="secondary">Default</Badge>}
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
           )}
-        </div>
 
-        {/* Right Column - Preview */}
-        <div className="space-y-6">
-          <Card className="sticky top-20">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="size-5 text-primary" />
-                Resume Preview
-              </CardTitle>
-              <CardDescription>
-                Download or preview your refined resume
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {hasResume ? (
-                <>
-                  <div className="aspect-[8.5/11] rounded-lg border border-border bg-secondary/20 flex items-center justify-center overflow-hidden">
-                    <div className="w-full h-full p-4 text-xs space-y-4">
-                      <div className="text-center border-b border-border pb-3">
-                        <p className="font-bold text-foreground text-base">John Doe</p>
-                        <p className="text-muted-foreground">Senior Software Engineer</p>
-                        <p className="text-muted-foreground text-[10px]">john@example.com • San Francisco, CA</p>
-                      </div>
+          {/* AI Analysis */}
+          {currentResume && analysis && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="size-5 text-primary" />
+                  AI-Extracted Information
+                </CardTitle>
+                <CardDescription>
+                  Key information extracted from your resume
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4 mb-6">
+                  <div className="flex items-center justify-between p-4 rounded-lg bg-secondary/30 border border-border">
+                    <div>
+                      <p className="text-sm font-medium">AI Analysis Score</p>
+                      <p className="text-xs text-muted-foreground">Based on ATS optimization</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-3xl font-bold text-primary">{currentResume.score || 0}</p>
+                      <p className="text-xs text-muted-foreground">/100</p>
+                    </div>
+                  </div>
+                </div>
+
+                <Tabs defaultValue="strengths" className="w-full">
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="strengths" className="gap-2">
+                      <Check className="size-4" />
+                      Strengths
+                    </TabsTrigger>
+                    <TabsTrigger value="gaps" className="gap-2">
+                      <AlertTriangle className="size-4" />
+                      Gaps
+                    </TabsTrigger>
+                    <TabsTrigger value="keywords" className="gap-2">
+                      <Code className="size-4" />
+                      Keywords
+                    </TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="strengths" className="mt-4">
+                    <div className="space-y-3">
+                      {analysis.strengths?.map((strength: string, i: number) => (
+                        <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-success/10 border border-success/20">
+                          <Check className="size-4 text-success mt-0.5 shrink-0" />
+                          <p className="text-sm text-foreground">{strength}</p>
+                        </div>
+                      ))}
+                      {!analysis.strengths?.length && (
+                        <p className="text-sm text-muted-foreground">No strengths identified yet.</p>
+                      )}
+                    </div>
+                  </TabsContent>
+                  
+                  <TabsContent value="gaps" className="mt-4">
+                    <div className="space-y-3">
+                      {analysis.gaps?.map((gap: string, i: number) => (
+                        <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-warning/10 border border-warning/20">
+                          <AlertTriangle className="size-4 text-warning mt-0.5 shrink-0" />
+                          <p className="text-sm text-foreground">{gap}</p>
+                        </div>
+                      ))}
+                      {!analysis.gaps?.length && (
+                        <p className="text-sm text-muted-foreground">No gaps identified yet.</p>
+                      )}
+                    </div>
+                  </TabsContent>
+                  
+                  <TabsContent value="keywords" className="mt-4">
+                    <div className="space-y-4">
                       <div>
-                        <p className="font-semibold text-foreground text-[10px] mb-1">SUMMARY</p>
-                        <p className="text-muted-foreground text-[9px] leading-relaxed">
-                          Experienced software engineer with 5+ years building scalable applications...
-                        </p>
-                      </div>
-                      <div>
-                        <p className="font-semibold text-foreground text-[10px] mb-1">EXPERIENCE</p>
-                        <div className="space-y-2">
-                          <div>
-                            <p className="font-medium text-foreground text-[9px]">Senior Software Engineer • TechCorp</p>
-                            <p className="text-muted-foreground text-[8px]">2022 - Present</p>
-                          </div>
-                          <div>
-                            <p className="font-medium text-foreground text-[9px]">Software Engineer • StartupXYZ</p>
-                            <p className="text-muted-foreground text-[8px]">2019 - 2022</p>
-                          </div>
+                        <p className="text-sm font-medium mb-2">Found Keywords</p>
+                        <div className="flex flex-wrap gap-2">
+                          {analysis.keywords?.found?.map((kw: string, i: number) => (
+                            <Badge key={i} variant="secondary" className="gap-1">
+                              <Check className="size-3 text-success" />
+                              {kw}
+                            </Badge>
+                          ))}
+                          {!analysis.keywords?.found?.length && (
+                            <p className="text-sm text-muted-foreground">No keywords found.</p>
+                          )}
                         </div>
                       </div>
                       <div>
-                        <p className="font-semibold text-foreground text-[10px] mb-1">SKILLS</p>
-                        <p className="text-muted-foreground text-[8px]">JavaScript, TypeScript, React, Node.js, Python...</p>
+                        <p className="text-sm font-medium mb-2">Missing Keywords</p>
+                        <div className="flex flex-wrap gap-2">
+                          {analysis.keywords?.missing?.map((kw: string, i: number) => (
+                            <Badge key={i} variant="outline" className="gap-1">
+                              <AlertTriangle className="size-3 text-warning" />
+                              {kw}
+                            </Badge>
+                          ))}
+                          {!analysis.keywords?.missing?.length && (
+                            <p className="text-sm text-muted-foreground">No missing keywords.</p>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button className="flex-1 gap-2">
-                      <Download className="size-4" />
-                      Download PDF
-                    </Button>
-                    <Button variant="outline" className="flex-1 gap-2">
-                      <Download className="size-4" />
-                      Download DOCX
-                    </Button>
-                  </div>
-                </>
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Re-analyze Button */}
+          {currentResume && (
+            <Button 
+              variant="outline" 
+              className="w-full gap-2"
+              onClick={handleAnalyze}
+              disabled={isAnalyzing}
+            >
+              {isAnalyzing ? (
+                <Loader2 className="size-4 animate-spin" />
               ) : (
-                <div className="aspect-[8.5/11] rounded-lg border border-dashed border-border flex flex-col items-center justify-center text-center p-4">
-                  <FileText className="size-12 text-muted-foreground/50 mb-4" />
-                  <p className="text-sm text-muted-foreground">
-                    Upload a resume to see the preview
-                  </p>
-                </div>
+                <RefreshCcw className="size-4" />
               )}
-            </CardContent>
-          </Card>
+              {isAnalyzing ? "Analyzing..." : "Re-analyze with AI"}
+            </Button>
+          )}
         </div>
-      </div>
-    </div>
-  )
-}
 
-function ExperienceItem({
-  title,
-  company,
-  duration,
-  highlights,
-}: {
-  title: string
-  company: string
-  duration: string
-  highlights: string[]
-}) {
-  return (
-    <div className="p-4 rounded-lg bg-secondary/30 border border-border">
-      <div className="flex items-start gap-3">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 shrink-0">
-          <Briefcase className="size-5 text-primary" />
+        {/* Right Column - Preview & Suggestions */}
+        <div className="space-y-6">
+          {currentResume && analysis ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Wand2 className="size-5 text-primary" />
+                    AI Suggestions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {analysis.suggestions?.map((suggestion: string, i: number) => (
+                    <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-secondary/30 border border-border">
+                      <Target className="size-4 text-primary mt-0.5 shrink-0" />
+                      <p className="text-sm text-foreground">{suggestion}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card className="sticky top-20">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="size-5 text-primary" />
+                    Resume Preview
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="aspect-[8.5/11] rounded-lg border border-border bg-secondary/20 flex items-center justify-center overflow-hidden">
+                    <p className="text-sm text-muted-foreground p-4">
+                      {currentResume.parsedText?.substring(0, 500) || "No preview available"}
+                    </p>
+                  </div>
+                  <Button className="w-full mt-4 gap-2">
+                    <Download className="size-4" />
+                    Download PDF
+                  </Button>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="flex size-16 items-center justify-center rounded-full bg-primary/10 mb-4">
+                  <Sparkles className="size-8 text-primary" />
+                </div>
+                <p className="text-sm font-medium text-foreground mb-1">
+                  No resume analyzed yet
+                </p>
+                <p className="text-xs text-muted-foreground max-w-[250px]">
+                  Upload your resume to get AI-powered analysis and suggestions
+                </p>
+              </CardContent>
+            </Card>
+          )}
         </div>
-        <div className="flex-1">
-          <p className="font-medium text-foreground">{title}</p>
-          <p className="text-sm text-muted-foreground">{company} • {duration}</p>
-          <ul className="mt-2 space-y-1">
-            {highlights.map((highlight, i) => (
-              <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                <span className="text-primary mt-1.5">•</span>
-                {highlight}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function GapItem({
-  type,
-  title,
-  description,
-}: {
-  type: "missing" | "improvement" | "suggestion"
-  title: string
-  description: string
-}) {
-  const icons = {
-    missing: AlertTriangle,
-    improvement: Target,
-    suggestion: Sparkles,
-  }
-  const Icon = icons[type]
-
-  return (
-    <div className="flex items-start gap-3 p-3 rounded-lg bg-secondary/30 border border-border">
-      <div className={cn(
-        "flex size-8 items-center justify-center rounded-full shrink-0",
-        type === "missing" ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"
-      )}>
-        <Icon className="size-4" />
-      </div>
-      <div>
-        <p className="text-sm font-medium text-foreground">{title}</p>
-        <p className="text-xs text-muted-foreground mt-1">{description}</p>
-      </div>
-    </div>
-  )
-}
-
-function RefinementOption({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: React.ElementType
-  title: string
-  description: string
-}) {
-  return (
-    <div className="flex items-start gap-3 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors cursor-pointer">
-      <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 shrink-0">
-        <Icon className="size-5 text-primary" />
-      </div>
-      <div>
-        <p className="text-sm font-medium text-foreground">{title}</p>
-        <p className="text-xs text-muted-foreground mt-1">{description}</p>
       </div>
     </div>
   )
